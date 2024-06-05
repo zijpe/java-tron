@@ -1025,13 +1025,23 @@ public class Manager {
         block.getTransactions().size());
   }
 
-  private void applyBlock(BlockCapsule block) throws ContractValidateException,
+  private void applyBlockAndPostTriggers(
+      ISession tmpSession, BlockCapsule newBlock, List<TransactionCapsule> txs)
+      throws ContractValidateException,
       ContractExeException, ValidateSignatureException, AccountResourceInsufficientException,
       TransactionExpirationException, TooBigTransactionException, DupTransactionException,
       TaposException, ValidateScheduleException, ReceiptCheckErrException,
       VMIllegalException, TooBigTransactionResultException,
       ZksnarkException, BadBlockException, EventBloomException {
-    applyBlock(block, block.getTransactions());
+    long oldSolidNum = getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
+
+    applyBlock(newBlock, txs);
+    tmpSession.commit();
+    // if event subscribe is enabled, post block trigger to queue
+    postBlockTrigger(newBlock);
+    // if event subscribe is enabled, post solidity trigger to queue
+    postSolidityTrigger(oldSolidNum,
+        getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
   }
 
   private void applyBlock(BlockCapsule block, List<TransactionCapsule> txs)
@@ -1113,8 +1123,8 @@ public class Manager {
         Exception exception = null;
         // todo  process the exception carefully later
         try (ISession tmpSession = revokingStore.buildSession()) {
-          applyBlock(item.getBlk().setSwitch(true));
-          tmpSession.commit();
+          BlockCapsule newBlock = item.getBlk().setSwitch(true);
+          applyBlockAndPostTriggers(tmpSession, newBlock, newBlock.getTransactions());
         } catch (AccountResourceInsufficientException
             | ValidateSignatureException
             | ContractValidateException
@@ -1143,6 +1153,8 @@ public class Manager {
             while (!getDynamicPropertiesStore()
                 .getLatestBlockHeaderHash()
                 .equals(binaryTree.getValue().peekLast().getParentHash())) {
+              reOrgContractTrigger();
+              reOrgLogsFilter();
               eraseBlock();
             }
 
@@ -1151,8 +1163,8 @@ public class Manager {
             for (KhaosBlock khaosBlock : second) {
               // todo  process the exception carefully later
               try (ISession tmpSession = revokingStore.buildSession()) {
-                applyBlock(khaosBlock.getBlk().setSwitch(true));
-                tmpSession.commit();
+                BlockCapsule newBlock = khaosBlock.getBlk().setSwitch(true);
+                applyBlockAndPostTriggers(tmpSession, newBlock, newBlock.getTransactions());
               } catch (AccountResourceInsufficientException
                   | ValidateSignatureException
                   | ContractValidateException
@@ -1322,17 +1334,7 @@ public class Manager {
               return;
             }
             try (ISession tmpSession = revokingStore.buildSession()) {
-
-              long oldSolidNum =
-                      chainBaseManager.getDynamicPropertiesStore().getLatestSolidifiedBlockNum();
-
-              applyBlock(newBlock, txs);
-              tmpSession.commit();
-              // if event subscribe is enabled, post block trigger to queue
-              postBlockTrigger(newBlock);
-              // if event subscribe is enabled, post solidity trigger to queue
-              postSolidityTrigger(oldSolidNum,
-                      getDynamicPropertiesStore().getLatestSolidifiedBlockNum());
+              applyBlockAndPostTriggers(tmpSession, newBlock, txs);
             } catch (Throwable throwable) {
               logger.error(throwable.getMessage(), throwable);
               khaosDb.removeBlk(block.getBlockId());
