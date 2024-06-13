@@ -1147,7 +1147,6 @@ public class Manager {
             Metrics.counterInc(MetricKeys.Counter.BLOCK_FORK, 1, MetricLabels.FAIL);
             MetricsUtil.meterMark(MetricsKey.BLOCKCHAIN_FAIL_FORK_COUNT);
             logger.warn("Switch back because exception thrown while switching forks.", exception);
-            first.forEach(khaosBlock -> khaosDb.removeBlk(khaosBlock.getBlk().getBlockId()));
             khaosDb.setHead(binaryTree.getValue().peekFirst());
 
             while (!getDynamicPropertiesStore()
@@ -1157,6 +1156,10 @@ public class Manager {
               reOrgLogsFilter();
               eraseBlock();
             }
+
+            BlockCapsule head = khaosDb.getHead();
+            first.forEach(khaosBlock -> khaosDb.removeBlk(khaosBlock.getBlk().getBlockId()));
+            khaosDb.setHead(new KhaosBlock(head));
 
             List<KhaosBlock> second = new ArrayList<>(binaryTree.getValue());
             Collections.reverse(second);
